@@ -1,0 +1,38 @@
+{
+  "name": "acp-pi",
+  "version": "0.1.0",
+  "description": "Agent Client Protocol server for Pi: lets any ACP client drive a Pi agent over RPC",
+  "type": "module",
+  "bin": {
+    "acp-pi": "bin/acp-pi.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node bin/acp-pi.mjs",
+    "test": "node --test test/",
+    "lint": "node --check bin/acp-pi.mjs"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "gentle-shell",
+    "acp",
+    "agent-client-protocol",
+    "agent",
+    "bridge"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nelsonacos/acp-pi.git"
+  }
+}

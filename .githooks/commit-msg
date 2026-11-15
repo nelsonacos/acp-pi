@@ -1,0 +1,58 @@
+#!/bin/sh
+# commit-msg: hace cumplir Conventional Commits en este repo.
+#
+# Instalación (una vez por clon):
+#   git config core.hooksPath .githooks
+#
+# Formato aceptado:
+#   <tipo>(<alcance opcional>)!: <descripción>
+# El "!" marca breaking change y es opcional. Los merges, reverts y los
+# commits de fixup/squash de un rebase interactivo se permiten sin validar.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+first_line=$(head -n 1 "$msg_file")
+
+# Excepciones legítimas: no las escribe una persona siguiendo la convención.
+case "$first_line" in
+  "Merge "*|"Revert "*|fixup!*|squash!*|amend!*)
+    exit 0
+    ;;
+esac
+
+tipos='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+patron="^($tipos)(\([a-z0-9._/-]+\))?!?: .+"
+
+if ! printf '%s' "$first_line" | grep -Eq "$patron"; then
+  cat >&2 <<EOF
+✗ El mensaje no cumple Conventional Commits.
+
+  Recibido: $first_line
+
+  Formato:  <tipo>(<alcance>)!: <descripción>
+  Tipos:    feat fix docs style refactor perf test build ci chore revert
+
+  Ejemplos:
+    feat(vocal): chunk long sources with a crossfade
+    fix(stems): prefer the fp32 model and fit the ORT session in memory
+    docs(odd): record the stems investigation
+
+  El cuerpo (después de una línea en blanco) es donde va el POR QUÉ:
+  el síntoma medido, qué se cambió y qué evidencia lo respalda.
+EOF
+  exit 1
+fi
+
+# La primera línea es la que se lee en el log y en los PRs: mantenerla corta.
+len=$(printf '%s' "$first_line" | wc -c | tr -d ' ')
+if [ "$len" -gt 100 ]; then
+  printf '✗ La primera línea tiene %s caracteres (máximo 100).\n' "$len" >&2
+  exit 1
+fi
+
+case "$first_line" in
+  *.) printf '✗ La primera línea no debe terminar en punto.\n' >&2; exit 1 ;;
+esac
+
+exit 0
