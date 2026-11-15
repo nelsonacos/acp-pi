@@ -43,3 +43,12 @@ Nombre elegido: **`acp-pi`** (libre en npm; `pi-acp` está tomado por un paquete
 - **L5** (evidencia): `@zed-industries/agent-client-protocol` 0.4.5 es el SDK ACP publicado.
 - **L6** (decisión): commits y documentación técnica en inglés (convención del ecosistema);
   conversación con el dueño en español.
+- **L7** (evidencia): el framing ACP real es NDJSON — un objeto JSON-RPC por línea terminado en
+  `\n`, sin cabeceras `Content-Length`. El SDK `@zed-industries/agent-client-protocol` 0.4.5 lo
+  resuelve para el lado agente con `ndJsonStream` + `AgentSideConnection`; el puente no maneja el
+  framing a mano.
+- **L8** (evidencia): `pi --mode rpc --no-session` real (pi-coding-agent 1.5.0) no emite evento
+  "ready": emite `extension_ui_request` al arrancar y la prueba de readiness es el `response` de
+  `get_state` (que trae `sessionId`). Un `prompt` emite `message_start` → `message_update`
+  (`text_delta`) → `message_end` → `turn_end` → `agent_end` → `agent_settled`; `agent_settled`
+  marca fin de turno.
