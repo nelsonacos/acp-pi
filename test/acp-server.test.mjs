@@ -229,3 +229,143 @@ test("EOF on stdin cleans up the pi child and exits 0", async (t) => {
   const marker = await waitForFile(exitMarker);
   assert.ok(marker !== null, "the fake Pi child must have been cleaned up");
 });
+
+test("session/cancel aborts the turn, keeps the child alive, and the session stays usable", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, { FAKE_PI_LONG_TURN: "1" });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  // First prompt runs until cancelled (the fake tags "LONG" turns as cancelable).
+  await client.request(3, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "LONG please keep going" }],
+  });
+  await client.waitFor(
+    (m) =>
+      m.method === "session/update" &&
+      m.params?.update?.sessionUpdate === "agent_message_chunk",
+  );
+
+  await client.send({
+    jsonrpc: "2.0",
+    method: "session/cancel",
+    params: { sessionId: "fake-session-1" },
+  });
+
+  const cancelled = await client.waitFor((m) => m.id === 3);
+  assert.deepEqual(cancelled.result, { stopReason: "cancelled" });
+
+  // The same child must still serve a normal prompt afterwards.
+  await client.request(4, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "hi" }],
+  });
+  const after = await client.waitFor((m) => m.id === 4);
+  assert.deepEqual(after.result, { stopReason: "end_turn" });
+
+  const chunks = client.messages.filter(
+    (m) =>
+      m.method === "session/update" &&
+      m.params?.update?.sessionUpdate === "agent_message_chunk",
+  );
+  assert.ok(
+    chunks.some((m) => m.params.update.content.text.includes("Hello")),
+    "the second prompt must stream from the surviving child",
+  );
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("session/request_permission deny prevents the tool from executing", async (t) => {
+  const workspace = makeWorkspace(t);
+  const executedMarker = join(tmpdir(), `acp-pi-tool-${Date.now()}-${Math.random()}`);
+  const child = spawnAcp(workspace, {
+    FAKE_PI_ASK_PERMISSION: "1",
+    FAKE_PI_TOOL_EXECUTED: executedMarker,
+  });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(executedMarker, { force: true });
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "do the dangerous thing" }],
+  });
+
+  const permission = await client.waitFor(
+    (m) => m.method === "session/request_permission",
+  );
+  assert.equal(permission.params.sessionId, "fake-session-1");
+  assert.deepEqual(
+    permission.params.options.map((o) => o.optionId),
+    ["allow", "deny"],
+  );
+
+  await client.send({
+    jsonrpc: "2.0",
+    id: permission.id,
+    result: { outcome: { outcome: "selected", optionId: "deny" } },
+  });
+
+  const response = await client.waitFor((m) => m.id === 3);
+  assert.deepEqual(response.result, { stopReason: "end_turn" });
+  assert.equal(
+    existsSync(executedMarker),
+    false,
+    "deny must prevent the tool from executing",
+  );
+
+  const chunks = client.messages
+    .filter((m) => m.method === "session/update")
+    .map((m) => m.params.update.content.text)
+    .join("");
+  assert.ok(
+    chunks.includes("tool denied"),
+    "the deny decision must be routed back to pi",
+  );
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("a pi crash mid-turn fails the pending prompt with an explicit error", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, { FAKE_PI_CRASH: "1" });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "crash now" }],
+  });
+
+  const response = await client.waitFor((m) => m.id === 3);
+  assert.equal(response.result, undefined);
+  assert.ok(response.error, "the pending prompt must fail with an error");
+  assert.match(response.error.data?.details ?? "", /exited/);
+
+  await client.closeAndWait();
+});
