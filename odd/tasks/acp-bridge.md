@@ -52,3 +52,14 @@ Nombre elegido: **`acp-pi`** (libre en npm; `pi-acp` está tomado por un paquete
   `get_state` (que trae `sessionId`). Un `prompt` emite `message_start` → `message_update`
   (`text_delta`) → `message_end` → `turn_end` → `agent_end` → `agent_settled`; `agent_settled`
   marca fin de turno.
+- **L9** (evidencia): Pi expone cancelación en RPC como el comando `abort`; sobre un turno en curso
+  emite `agent_settled {aborted:true}` y después el `response` de `abort`, sin matar el proceso
+  hijo. Verificado contra el `pi` real (pi-coding-agent 1.5.0).
+- **L10** (evidencia): las confirmaciones de Pi viajan como `extension_ui_request` con
+  `method:"confirm"` o `method:"select"` y se responden con `extension_ui_response` (que no produce
+  `response`). Al arrancar, el `pi` real emite solo fire-and-forget (`setStatus`, `setWidget`,
+  `notify`); no se pudo ejercitar un `confirm` real con un prompt simple porque el gate de
+  permiso lo disparan hooks `tool_call` de extensiones, no el núcleo.
+- **L11** (evidencia): si el hijo muere a mitad de turno (SIGKILL), la request `session/prompt`
+  pendiente responde error JSON-RPC `-32603` con `details: "pi exited unexpectedly (code=null,
+  signal=SIGKILL)"`; nunca queda la promesa sin resolver.
