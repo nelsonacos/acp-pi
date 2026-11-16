@@ -69,3 +69,17 @@ Nombre elegido: **`acp-pi`** (libre en npm; `pi-acp` está tomado por un paquete
   métodos del cliente (`session/update`, `session/request_permission`) se llaman vía
   `ctx.client.notify`/`ctx.client.request`; `PROTOCOL_VERSION` sigue siendo `1`. `zod` queda en
   `4.6.7` (peer del SDK, ya estaba transitivo) y `npm audit` baja de 2 high a 0.
+- **L13** (evidencia): Pi cambia de modelo por RPC con
+  `{"type":"set_model","provider":<provider>,"modelId":<id>}` y responde `success:true` con el
+  `Model` completo (docs/rpc-commands.md §set_model). Verificado en vivo: `set_model` a
+  `deepseek/deepseek-flash` y el `get_state` posterior devolvió `deepseek/deepseek-flash`.
+- **L14** (evidencia): Happy arma `session/prompt` como `prompt:[{type:"text",text}]` y
+  `session/new` con `mcpServers` (que el puente ignora); un prompt `Hola` contra el `pi` real
+  responde `stopReason:"end_turn"` sin error. Happy recorta el `data` del error (muestra solo
+  `code`/`message`) y vuelca el stderr del agente a su log (`~/.happy/logs`), por lo que
+  `ACP_PI_DEBUG=1` es la vía para capturar el método y el stack exactos.
+- **L15** (evidencia): el SDK 2.x **valida el nombre del método al registrarlo**: un
+  `onRequest("session/set_model", handler)` sin parser lanza `Unknown ACP request method` y el
+  proceso muere al arrancar, de modo que toda request queda en timeout sin mensaje de error
+  visible. La forma correcta es `onRequest(method, paramsParser, handler)` con
+  `paramsParser: (params) => params`; la validación fina queda en `#toPiSetModel`.
