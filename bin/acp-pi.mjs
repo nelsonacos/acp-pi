@@ -6,7 +6,7 @@ import {
   AgentSideConnection,
   ndJsonStream,
 } from "@zed-industries/agent-client-protocol";
-import { AcpAgent } from "../lib/acp-agent.mjs";
+import { AcpAgent, toRequestError } from "../lib/acp-agent.mjs";
 import {
   debugEnabled,
   debugException,
@@ -154,15 +154,17 @@ function isUnknownMethodError(message) {
  * exception (with stack) before the SDK turns it into a data-less -32603.
  */
 function wrapAgentForDebug(agent) {
-  if (!debugEnabled()) return agent;
   const wrap = (method, name) =>
     async (params) => {
-      debugParams(name, params);
+      if (debugEnabled()) debugParams(name, params);
       try {
         return await method(params);
       } catch (err) {
-        debugException(name, err);
-        throw err;
+        if (debugEnabled()) debugException(name, err);
+        // Pi's own sentence is the actionable part of a failure ("No API key
+        // found for the selected model."). The SDK would turn a plain throw into
+        // a data-less -32603, leaving the client with nothing to show.
+        throw toRequestError(err);
       }
     };
   return {

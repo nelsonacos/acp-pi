@@ -583,3 +583,66 @@ test("without ACP_PI_DEBUG the bridge emits no debug lines", async (t) => {
 
   assert.doesNotMatch(child.stderrText(), /acp-pi: debug:/);
 });
+
+test("a failed prompt carries pi's own message to the client", async (t) => {
+  // Regression: pi reports usable failures ("No API key found for the selected
+  // model."). Converting them into a bare internal error left the client with
+  // nothing to show, which is how a missing credential looked like a bridge bug.
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, {
+    FAKE_PI_REJECT_PROMPT: "No API key found for the selected model.",
+  });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "Hola" }],
+  });
+  const response = await client.waitFor((m) => m.id === 3);
+
+  assert.ok(response.error, "a rejected prompt must answer with an error");
+  assert.match(response.error.message, /No API key found for the selected model/);
+  assert.match(JSON.stringify(response.error.data ?? {}), /No API key/);
+
+  // A failed turn must not wedge the session: the next prompt runs normally.
+  await client.request(4, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "text", text: "again" }],
+  });
+  const second = await client.waitFor((m) => m.id === 4);
+  assert.equal(second.result.stopReason, "end_turn");
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("a failure while opening a session carries pi's message too", async (t) => {
+  // Every protocol path, not just the prompt: a client that cannot see why the
+  // session failed will report a generic error and hide a fixable cause.
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, {
+    FAKE_PI_FAIL_STATE: "Credential expired, run pi login again.",
+  });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  const response = await client.waitFor((m) => m.id === 2);
+
+  assert.ok(response.error, "the failed handshake must answer with an error");
+  assert.match(response.error.message, /Credential expired/);
+
+  child.kill("SIGKILL");
+});
