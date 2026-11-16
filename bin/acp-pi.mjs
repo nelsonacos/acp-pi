@@ -7,6 +7,12 @@ import {
   ndJsonStream,
 } from "@zed-industries/agent-client-protocol";
 import { AcpAgent } from "../lib/acp-agent.mjs";
+import {
+  debugEnabled,
+  debugException,
+  debugLog,
+  debugParams,
+} from "../lib/acp-debug.mjs";
 
 function parseArgs(argv) {
   let workspace;
@@ -84,15 +90,92 @@ const agent = new AcpAgent({
 });
 
 // ACP over stdio is newline-delimited JSON-RPC 2.0; the SDK's ndJsonStream owns
-// the framing so the bridge never hand-rolls it.
-const stream = ndJsonStream(
-  Writable.toWeb(process.stdout),
-  Readable.toWeb(process.stdin),
-);
+// the framing so the bridge never hand-rolls it. With `ACP_PI_DEBUG` set, the
+// streams are wrapped to observe method names (and method-not-found errors) on
+// stderr without touching the stdout protocol.
+const output = Writable.toWeb(process.stdout);
+const input = Readable.toWeb(process.stdin);
+const stream = observeStream(ndJsonStream(output, input), output);
 const connection = new AgentSideConnection((conn) => {
   agent.attachConnection(conn);
-  return agent;
+  return wrapAgentForDebug(agent);
 }, stream);
+
+/**
+ * Wrap the incoming/outgoing ACP streams to trace method names and
+ * method-not-found errors on stderr. Disabled (identity) unless ACP_PI_DEBUG.
+ */
+function observeStream(base, output) {
+  if (!debugEnabled()) return base;
+
+  const readable = base.readable.pipeThrough(
+    new TransformStream({
+      transform(message, controller) {
+        if (message && typeof message.method === "string") {
+          debugLog(`method ${message.method}`);
+        }
+        controller.enqueue(message);
+      },
+    }),
+  );
+
+  const textEncoder = new TextEncoder();
+  const writable = new WritableStream({
+    async write(message) {
+      if (isUnknownMethodError(message)) {
+        debugLog(`unknown method ${message.error.data.method}`);
+      }
+      const writer = output.getWriter();
+      try {
+        await writer.write(
+          textEncoder.encode(`${JSON.stringify(message)}\n`),
+        );
+      } finally {
+        writer.releaseLock();
+      }
+    },
+  });
+
+  return { readable, writable };
+}
+
+function isUnknownMethodError(message) {
+  return (
+    message &&
+    message.error &&
+    message.error.code === -32601 &&
+    message.error.data &&
+    typeof message.error.data.method === "string"
+  );
+}
+
+/**
+ * Wrap the ACP request handlers so ACP_PI_DEBUG records their params and any
+ * exception (with stack) before the SDK turns it into a data-less -32603.
+ */
+function wrapAgentForDebug(agent) {
+  if (!debugEnabled()) return agent;
+  const wrap = (method, name) =>
+    async (params) => {
+      debugParams(name, params);
+      try {
+        return await method(params);
+      } catch (err) {
+        debugException(name, err);
+        throw err;
+      }
+    };
+  return {
+    initialize: agent.initialize.bind(agent),
+    newSession: wrap(agent.newSession.bind(agent), "session/new"),
+    prompt: wrap(agent.prompt.bind(agent), "session/prompt"),
+    cancel: wrap(agent.cancel.bind(agent), "session/cancel"),
+    setSessionModel: wrap(
+      agent.setSessionModel.bind(agent),
+      "session/set_model",
+    ),
+  };
+}
 
 let shuttingDown = false;
 async function shutdown() {

@@ -416,3 +416,170 @@ test("a pi crash mid-turn fails the pending prompt with an explicit error", asyn
 
   await client.closeAndWait();
 });
+
+test("session/set_model switches pi to the requested model", async (t) => {
+  const workspace = makeWorkspace(t);
+  const modelFile = join(tmpdir(), `acp-pi-model-${Date.now()}-${Math.random()}`);
+  const child = spawnAcp(workspace, { FAKE_PI_SET_MODEL_FILE: modelFile });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(modelFile, { force: true });
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/set_model", {
+    sessionId: "fake-session-1",
+    modelId: "anthropic/claude-sonnet-4",
+  });
+  const response = await client.waitFor((m) => m.id === 3);
+
+  assert.deepEqual(response.result, {});
+  assert.equal(
+    await waitForFile(modelFile),
+    "anthropic/claude-sonnet-4\n",
+  );
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("session/set_model rejects an unknown model with invalid params", async (t) => {
+  const workspace = makeWorkspace(t);
+  const modelFile = join(tmpdir(), `acp-pi-model-${Date.now()}-${Math.random()}`);
+  const child = spawnAcp(workspace, {
+    FAKE_PI_REJECT_MODEL: "1",
+    FAKE_PI_SET_MODEL_FILE: modelFile,
+  });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(modelFile, { force: true });
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/set_model", {
+    sessionId: "fake-session-1",
+    modelId: "anthropic/does-not-exist",
+  });
+  const response = await client.waitFor((m) => m.id === 3);
+
+  assert.equal(response.result, undefined);
+  assert.equal(response.error.code, -32602);
+  assert.equal(response.error.message, "Invalid params");
+  assert.equal(response.error.data.modelId, "anthropic/does-not-exist");
+  assert.equal(
+    existsSync(modelFile),
+    false,
+    "a rejected model must never be applied",
+  );
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("session/set_model rejects a malformed model id", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace);
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  await client.request(3, "session/set_model", {
+    sessionId: "fake-session-1",
+    modelId: "no-slash",
+  });
+  const response = await client.waitFor((m) => m.id === 3);
+
+  assert.equal(response.result, undefined);
+  assert.equal(response.error.code, -32602);
+  assert.equal(
+    response.error.data.modelId,
+    'must be "<provider>/<model-id>"',
+  );
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("ACP_PI_DEBUG traces methods, params, exceptions and unknown methods", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, { ACP_PI_DEBUG: "1" });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+
+  // A content block the bridge cannot map must fail AND be traced with its
+  // params and stack — the exact clue needed for a data-less -32603.
+  await client.request(3, "session/prompt", {
+    sessionId: "fake-session-1",
+    prompt: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+  });
+  const failed = await client.waitFor((m) => m.id === 3);
+  assert.equal(failed.error.code, -32603);
+
+  // An unknown method must be named in the trace as well.
+  await client.request(4, "session/load", { sessionId: "fake-session-1" });
+  const unknown = await client.waitFor((m) => m.id === 4);
+  assert.equal(unknown.error.code, -32601);
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+
+  const stderr = child.stderrText();
+  assert.match(stderr, /acp-pi: debug: method initialize/);
+  assert.match(stderr, /acp-pi: debug: method session\/new/);
+  assert.match(stderr, /acp-pi: debug: params session\/new/);
+  assert.match(stderr, /acp-pi: debug: method session\/prompt/);
+  assert.match(stderr, /acp-pi: debug: params session\/prompt.*image/);
+  assert.match(
+    stderr,
+    /acp-pi: debug: error in session\/prompt: unsupported prompt content block type: image/,
+  );
+  assert.match(stderr, /acp-pi: debug: method session\/load/);
+  assert.match(stderr, /acp-pi: debug: unknown method session\/load/);
+});
+
+test("without ACP_PI_DEBUG the bridge emits no debug lines", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace);
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  await client.waitFor((m) => m.id === 2);
+  await client.request(3, "session/set_model", {
+    sessionId: "fake-session-1",
+    modelId: "fake/fake-model",
+  });
+  await client.waitFor((m) => m.id === 3);
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+
+  assert.doesNotMatch(child.stderrText(), /acp-pi: debug:/);
+});
