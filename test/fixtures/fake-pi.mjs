@@ -16,6 +16,7 @@
  *   FAKE_PI_NO_MODELS       when set, get_state reports no model and
  *                            get_available_models returns an empty list
  *   FAKE_PI_REJECT_MODEL    when set, set_model responds success:false
+ *   FAKE_PI_FAIL_STATE      when set, get_state answers success:false with this text
  *   FAKE_PI_REJECT_PROMPT   when set, the first prompt answers success:false
  *                           with this value as pi's error text
  *   FAKE_PI_SET_MODEL_FILE  when set, writes "provider/modelId" here on set_model
@@ -178,6 +179,16 @@ function handleUiResponse(command) {
 
 function handleCommand(command) {
   if (command.type === "get_state") {
+    if (process.env.FAKE_PI_FAIL_STATE) {
+      send({
+        id: command.id,
+        type: "response",
+        command: "get_state",
+        success: false,
+        error: process.env.FAKE_PI_FAIL_STATE,
+      });
+      return;
+    }
     if (process.env.FAKE_PI_CWD_FILE) {
       writeFileSync(process.env.FAKE_PI_CWD_FILE, `${process.cwd()}\n`);
     }

@@ -623,3 +623,26 @@ test("a failed prompt carries pi's own message to the client", async (t) => {
   const { code } = await client.closeAndWait();
   assert.equal(code, 0);
 });
+
+test("a failure while opening a session carries pi's message too", async (t) => {
+  // Every protocol path, not just the prompt: a client that cannot see why the
+  // session failed will report a generic error and hide a fixable cause.
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, {
+    FAKE_PI_FAIL_STATE: "Credential expired, run pi login again.",
+  });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  const response = await client.waitFor((m) => m.id === 2);
+
+  assert.ok(response.error, "the failed handshake must answer with an error");
+  assert.match(response.error.message, /Credential expired/);
+
+  child.kill("SIGKILL");
+});
