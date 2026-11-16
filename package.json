@@ -34,5 +34,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nelsonacos/acp-pi.git"
+  },
+  "dependencies": {
+    "@zed-industries/agent-client-protocol": "0.4.5"
   }
 }
