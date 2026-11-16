@@ -13,10 +13,17 @@
  *                           and only settles after an `extension_ui_response`
  *   FAKE_PI_TOOL_EXECUTED   when set (with ASK_PERMISSION), written on `confirmed:true`
  *   FAKE_PI_CRASH           when set, a prompt emits one delta then exits with code 1
+ *   FAKE_PI_NO_MODELS       when set, get_state reports no model and
+ *                            get_available_models returns an empty list
+ *   FAKE_PI_REJECT_MODEL    when set, set_model responds success:false
+ *   FAKE_PI_SET_MODEL_FILE  when set, writes "provider/modelId" here on set_model
  */
 import { writeFileSync } from "node:fs";
 
 const sessionId = process.env.FAKE_PI_SESSION_ID ?? "fake-session-1";
+
+/** The currently selected model, mutated by a successful `set_model`. */
+let currentModel = { id: "fake-model", name: "Fake Model", provider: "fake" };
 
 let exitMarked = false;
 function markExit() {
@@ -155,12 +162,60 @@ function handleCommand(command) {
     if (process.env.FAKE_PI_CWD_FILE) {
       writeFileSync(process.env.FAKE_PI_CWD_FILE, `${process.cwd()}\n`);
     }
+    const data = { sessionId, cwd: process.cwd(), isStreaming: false };
+    if (!process.env.FAKE_PI_NO_MODELS) {
+      data.model = currentModel;
+    }
     send({
       id: command.id,
       type: "response",
       command: "get_state",
       success: true,
-      data: { sessionId, cwd: process.cwd(), isStreaming: false },
+      data,
+    });
+    return;
+  }
+
+  if (command.type === "get_available_models") {
+    const models = process.env.FAKE_PI_NO_MODELS ? [] : [currentModel];
+    send({
+      id: command.id,
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      data: { models },
+    });
+    return;
+  }
+
+  if (command.type === "set_model") {
+    if (process.env.FAKE_PI_REJECT_MODEL) {
+      send({
+        id: command.id,
+        type: "response",
+        command: "set_model",
+        success: false,
+        error: `Model not found: ${command.provider}/${command.modelId}`,
+      });
+      return;
+    }
+    currentModel = {
+      id: command.modelId,
+      name: command.modelId,
+      provider: command.provider,
+    };
+    if (process.env.FAKE_PI_SET_MODEL_FILE) {
+      writeFileSync(
+        process.env.FAKE_PI_SET_MODEL_FILE,
+        `${command.provider}/${command.modelId}\n`,
+      );
+    }
+    send({
+      id: command.id,
+      type: "response",
+      command: "set_model",
+      success: true,
+      data: currentModel,
     });
     return;
   }
