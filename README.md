@@ -32,6 +32,20 @@ npm install -g acp-pi
 acp-pi --workspace /path/to/project
 ```
 
+### Credentials
+
+The spawned `pi` inherits your environment and reads credentials the same way it
+does anywhere else. If your keys live outside `~/.pi/agent` — gentle-shell keeps
+them in its own agent directory — say so before starting the client:
+
+```sh
+export PI_CODING_AGENT_DIR="$HOME/.gentle-shell/agent"
+```
+
+Without it Pi starts fine, lists its models, and then refuses the first prompt
+with `No API key found for the selected model.` The bridge now relays that
+sentence to the client instead of a bare internal error.
+
 ## What it will not do
 
 - It does not bundle Pi: you install `pi` (or `gentle-shell`) yourself.
