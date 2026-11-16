@@ -13,6 +13,8 @@
  *                           and only settles after an `extension_ui_response`
  *   FAKE_PI_TOOL_EXECUTED   when set (with ASK_PERMISSION), written on `confirmed:true`
  *   FAKE_PI_CRASH           when set, a prompt emits one delta then exits with code 1
+ *   FAKE_PI_NO_MODELS       when set, get_state reports no model and
+ *                            get_available_models returns an empty list
  */
 import { writeFileSync } from "node:fs";
 
@@ -155,12 +157,30 @@ function handleCommand(command) {
     if (process.env.FAKE_PI_CWD_FILE) {
       writeFileSync(process.env.FAKE_PI_CWD_FILE, `${process.cwd()}\n`);
     }
+    const data = { sessionId, cwd: process.cwd(), isStreaming: false };
+    if (!process.env.FAKE_PI_NO_MODELS) {
+      data.model = { id: "fake-model", name: "Fake Model", provider: "fake" };
+    }
     send({
       id: command.id,
       type: "response",
       command: "get_state",
       success: true,
-      data: { sessionId, cwd: process.cwd(), isStreaming: false },
+      data,
+    });
+    return;
+  }
+
+  if (command.type === "get_available_models") {
+    const models = process.env.FAKE_PI_NO_MODELS
+      ? []
+      : [{ id: "fake-model", name: "Fake Model", provider: "fake" }];
+    send({
+      id: command.id,
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      data: { models },
     });
     return;
   }

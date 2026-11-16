@@ -153,6 +153,53 @@ test("session/new spawns the pi child in the workspace cwd", async (t) => {
   assert.equal(code, 0);
 });
 
+test("session/new reports Pi's real models and the active model", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace);
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  const response = await client.waitFor((m) => m.id === 2);
+
+  assert.deepEqual(response.result, {
+    sessionId: "fake-session-1",
+    models: {
+      availableModels: [{ modelId: "fake/fake-model", name: "Fake Model" }],
+      currentModelId: "fake/fake-model",
+    },
+  });
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
+test("session/new omits models when Pi reports no active model", async (t) => {
+  const workspace = makeWorkspace(t);
+  const child = spawnAcp(workspace, { FAKE_PI_NO_MODELS: "1" });
+  const client = new JsonRpcClient(child);
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+
+  await client.request(1, "initialize", { protocolVersion: 1 });
+  await client.waitFor((m) => m.id === 1);
+
+  await client.request(2, "session/new", { cwd: workspace, mcpServers: [] });
+  const response = await client.waitFor((m) => m.id === 2);
+
+  // No active model means no honest `models` block: the bridge never invents one.
+  assert.deepEqual(response.result, { sessionId: "fake-session-1" });
+
+  const { code } = await client.closeAndWait();
+  assert.equal(code, 0);
+});
+
 test("session/prompt streams at least two updates and settles on end_turn", async (t) => {
   const workspace = makeWorkspace(t);
   const child = spawnAcp(workspace);
