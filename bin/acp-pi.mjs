@@ -115,11 +115,17 @@ app.onRequest("session/prompt", (ctx) =>
     "session/prompt",
   )(ctx.params),
 );
-app.onRequest("session/set_model", (ctx) =>
-  wrap(
-    (params) => acpAgent.setSessionModel(params),
-    "session/set_model",
-  )(ctx.params),
+// `session/set_model` is an extension the SDK does not know, so it needs an
+// explicit params parser; the shape is validated in the agent, which answers
+// invalid-params for a malformed model id instead of silently ignoring it.
+app.onRequest(
+  "session/set_model",
+  (params) => params,
+  (ctx) =>
+    wrap(
+      (params) => acpAgent.setSessionModel(params),
+      "session/set_model",
+    )(ctx.params),
 );
 app.onNotification("session/cancel", (ctx) =>
   wrap((params) => acpAgent.cancel(params), "session/cancel")(ctx.params),
