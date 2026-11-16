@@ -2,10 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
-import {
-  AgentSideConnection,
-  ndJsonStream,
-} from "@zed-industries/agent-client-protocol";
+import { agent as createAgent, ndJsonStream } from "@agentclientprotocol/sdk";
 import { AcpAgent, toRequestError } from "../lib/acp-agent.mjs";
 import {
   debugEnabled,
@@ -76,7 +73,7 @@ if (!statSync(absWorkspace).isDirectory()) {
   fail(`workspace is not a directory: ${workspace}`);
 }
 
-const agent = new AcpAgent({
+const acpAgent = new AcpAgent({
   workspace: absWorkspace,
   piCommand: resolvePiCommand(),
   turnTimeoutMs: parsePositiveInt(
@@ -89,6 +86,51 @@ const agent = new AcpAgent({
   ),
 });
 
+// Register the agent-side ACP handlers, then serve stdio. The SDK owns the JSON-RPC
+// dispatch and framing; each handler receives the parsed params and a typed client
+// context for the client-side methods (`session/update`, `session/request_permission`).
+const app = createAgent();
+
+// Every handler goes through the same wrapper: it traces the params and any
+// exception when ACP_PI_DEBUG is set, and it keeps Pi's own failure sentence
+// visible instead of letting the SDK collapse a throw into a data-less -32603.
+const wrap = (method, name) =>
+  async (params) => {
+    if (debugEnabled()) debugParams(name, params);
+    try {
+      return await method(params);
+    } catch (err) {
+      if (debugEnabled()) debugException(name, err);
+      throw toRequestError(err);
+    }
+  };
+
+app.onRequest("initialize", (ctx) => acpAgent.initialize(ctx.params));
+app.onRequest("session/new", (ctx) =>
+  wrap((params) => acpAgent.newSession(params), "session/new")(ctx.params),
+);
+app.onRequest("session/prompt", (ctx) =>
+  wrap(
+    (params) => acpAgent.prompt(params, ctx.client),
+    "session/prompt",
+  )(ctx.params),
+);
+// `session/set_model` is an extension the SDK does not know, so it needs an
+// explicit params parser; the shape is validated in the agent, which answers
+// invalid-params for a malformed model id instead of silently ignoring it.
+app.onRequest(
+  "session/set_model",
+  (params) => params,
+  (ctx) =>
+    wrap(
+      (params) => acpAgent.setSessionModel(params),
+      "session/set_model",
+    )(ctx.params),
+);
+app.onNotification("session/cancel", (ctx) =>
+  wrap((params) => acpAgent.cancel(params), "session/cancel")(ctx.params),
+);
+
 // ACP over stdio is newline-delimited JSON-RPC 2.0; the SDK's ndJsonStream owns
 // the framing so the bridge never hand-rolls it. With `ACP_PI_DEBUG` set, the
 // streams are wrapped to observe method names (and method-not-found errors) on
@@ -96,10 +138,7 @@ const agent = new AcpAgent({
 const output = Writable.toWeb(process.stdout);
 const input = Readable.toWeb(process.stdin);
 const stream = observeStream(ndJsonStream(output, input), output);
-const connection = new AgentSideConnection((conn) => {
-  agent.attachConnection(conn);
-  return wrapAgentForDebug(agent);
-}, stream);
+app.connect(stream);
 
 /**
  * Wrap the incoming/outgoing ACP streams to trace method names and
@@ -149,42 +188,12 @@ function isUnknownMethodError(message) {
   );
 }
 
-/**
- * Wrap the ACP request handlers so ACP_PI_DEBUG records their params and any
- * exception (with stack) before the SDK turns it into a data-less -32603.
- */
-function wrapAgentForDebug(agent) {
-  const wrap = (method, name) =>
-    async (params) => {
-      if (debugEnabled()) debugParams(name, params);
-      try {
-        return await method(params);
-      } catch (err) {
-        if (debugEnabled()) debugException(name, err);
-        // Pi's own sentence is the actionable part of a failure ("No API key
-        // found for the selected model."). The SDK would turn a plain throw into
-        // a data-less -32603, leaving the client with nothing to show.
-        throw toRequestError(err);
-      }
-    };
-  return {
-    initialize: agent.initialize.bind(agent),
-    newSession: wrap(agent.newSession.bind(agent), "session/new"),
-    prompt: wrap(agent.prompt.bind(agent), "session/prompt"),
-    cancel: wrap(agent.cancel.bind(agent), "session/cancel"),
-    setSessionModel: wrap(
-      agent.setSessionModel.bind(agent),
-      "session/set_model",
-    ),
-  };
-}
-
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    await agent.shutdown();
+    await acpAgent.shutdown();
   } catch {
     // Best-effort cleanup on disconnect; nothing left to report to the client.
   }

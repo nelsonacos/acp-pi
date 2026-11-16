@@ -63,3 +63,9 @@ Nombre elegido: **`acp-pi`** (libre en npm; `pi-acp` está tomado por un paquete
 - **L11** (evidencia): si el hijo muere a mitad de turno (SIGKILL), la request `session/prompt`
   pendiente responde error JSON-RPC `-32603` con `details: "pi exited unexpectedly (code=null,
   signal=SIGKILL)"`; nunca queda la promesa sin resolver.
+- **L12** (evidencia): migrado del SDK deprecado `@zed-industries/agent-client-protocol` 0.4.5 a
+  `@agentclientprotocol/sdk` 2.7.0. El API cambió: `AgentSideConnection` + factory → `agent()` +
+  `AgentApp` con `onRequest`/`onNotification`/`connect`; `session/cancel` es notificación; los
+  métodos del cliente (`session/update`, `session/request_permission`) se llaman vía
+  `ctx.client.notify`/`ctx.client.request`; `PROTOCOL_VERSION` sigue siendo `1`. `zod` queda en
+  `4.6.7` (peer del SDK, ya estaba transitivo) y `npm audit` baja de 2 high a 0.
