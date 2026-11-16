@@ -1,6 +1,6 @@
 {
   "name": "acp-pi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent Client Protocol server for Pi: lets any ACP client drive a Pi agent over RPC",
   "type": "module",
   "bin": {
@@ -36,6 +36,7 @@
     "url": "git+https://github.com/nelsonacos/acp-pi.git"
   },
   "dependencies": {
-    "@zed-industries/agent-client-protocol": "0.4.5"
+    "@agentclientprotocol/sdk": "2.7.0",
+    "zod": "4.6.7"
   }
 }

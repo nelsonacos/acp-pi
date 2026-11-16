@@ -2,10 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
-import {
-  AgentSideConnection,
-  ndJsonStream,
-} from "@zed-industries/agent-client-protocol";
+import { agent as createAgent, ndJsonStream } from "@agentclientprotocol/sdk";
 import { AcpAgent } from "../lib/acp-agent.mjs";
 
 function parseArgs(argv) {
@@ -70,7 +67,7 @@ if (!statSync(absWorkspace).isDirectory()) {
   fail(`workspace is not a directory: ${workspace}`);
 }
 
-const agent = new AcpAgent({
+const acpAgent = new AcpAgent({
   workspace: absWorkspace,
   piCommand: resolvePiCommand(),
   turnTimeoutMs: parsePositiveInt(
@@ -83,23 +80,31 @@ const agent = new AcpAgent({
   ),
 });
 
+// Register the agent-side ACP handlers, then serve stdio. The SDK owns the JSON-RPC
+// dispatch and framing; each handler receives the parsed params and a typed client
+// context for the client-side methods (`session/update`, `session/request_permission`).
+const app = createAgent();
+app.onRequest("initialize", (ctx) => acpAgent.initialize(ctx.params));
+app.onRequest("session/new", (ctx) => acpAgent.newSession(ctx.params));
+app.onRequest("session/prompt", (ctx) =>
+  acpAgent.prompt(ctx.params, ctx.client),
+);
+app.onNotification("session/cancel", (ctx) => acpAgent.cancel(ctx.params));
+
 // ACP over stdio is newline-delimited JSON-RPC 2.0; the SDK's ndJsonStream owns
 // the framing so the bridge never hand-rolls it.
 const stream = ndJsonStream(
   Writable.toWeb(process.stdout),
   Readable.toWeb(process.stdin),
 );
-const connection = new AgentSideConnection((conn) => {
-  agent.attachConnection(conn);
-  return agent;
-}, stream);
+app.connect(stream);
 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    await agent.shutdown();
+    await acpAgent.shutdown();
   } catch {
     // Best-effort cleanup on disconnect; nothing left to report to the client.
   }
