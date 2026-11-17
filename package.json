@@ -38,5 +38,17 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "2.7.0",
     "zod": "4.6.7"
+  },
+  "author": {
+    "name": "Nelson Acosta",
+    "email": "gh.nelchar@gmail.com",
+    "url": "https://github.com/nelsonacos"
+  },
+  "homepage": "https://github.com/nelsonacos/acp-pi#readme",
+  "bugs": {
+    "url": "https://github.com/nelsonacos/acp-pi/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
