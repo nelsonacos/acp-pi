@@ -1,0 +1,40 @@
+name: release
+
+# Publishes to npm through trusted publishing (OIDC): no long-lived token is stored
+# anywhere, and npm verifies that the request comes from this repository and this
+# workflow file. A release published by hand in GitHub is what triggers a publish —
+# the human decision stays where it belongs.
+on:
+  release:
+    types: [published]
+  # An escape hatch for a re-run after a failed publish, without cutting a new release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required: this is what lets the job request an OIDC token npm will trust.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # The environment name must match the one configured in the npm package settings.
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      # --provenance publishes a signed attestation tying the tarball to this commit
+      # and this workflow, which is the point of doing it this way at all.
+      - name: Publish
+        run: npm publish --access public --provenance
