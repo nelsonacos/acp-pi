@@ -18,7 +18,7 @@
   },
   "scripts": {
     "start": "node bin/acp-pi.mjs",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.mjs",
     "lint": "node --check bin/acp-pi.mjs"
   },
   "keywords": [
